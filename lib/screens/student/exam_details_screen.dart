@@ -5,6 +5,8 @@ import 'package:onlineex/services/exam_service.dart';
 import 'package:onlineex/services/connectivity_service.dart';
 import 'package:onlineex/models/exam_model.dart';
 import 'package:onlineex/screens/student/take_exam_screen.dart';
+import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 
 class ExamDetailsScreen extends StatefulWidget {
@@ -31,14 +33,85 @@ class _ExamDetailsScreenState extends State<ExamDetailsScreen> {
     _examService = ExamService(connectivityService);
   }
   
+  Future<void> _checkCameraPermission() async {
+    final status = await Permission.camera.status;
+    if (status.isDenied) {
+      await Permission.camera.request();
+    }
+    
+    if (await Permission.camera.isPermanentlyDenied) {
+      if (!mounted) return;
+      
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Camera Permission Required'),
+          content: const Text(
+            'Camera access is required for exam proctoring. Please enable camera access in your device settings to continue.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                openAppSettings();
+              },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+  }
+  
+  Future<bool> _initializeCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        if (!mounted) return false;
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No camera found on your device.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error accessing camera: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return false;
+    }
+  }
+  
   Future<void> _startExam() async {
     final authService = Provider.of<AuthService>(context, listen: false);
-    final user = authService.userModel;
+    final user = authService.currentUser;
     
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please log in to take the exam.')),
       );
+      return;
+    }
+    
+    // Check camera permission
+    await _checkCameraPermission();
+    if (!(await Permission.camera.isGranted)) {
+      return;
+    }
+    
+    // Initialize camera
+    if (!(await _initializeCamera())) {
       return;
     }
     

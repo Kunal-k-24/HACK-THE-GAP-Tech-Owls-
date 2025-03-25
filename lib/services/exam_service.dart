@@ -260,6 +260,11 @@ class ExamService {
     await _ensureConnectivity();
     
     try {
+      // Use mock implementation for development
+      return mockStartExam(examId, userId);
+      
+      // TODO: Uncomment for production
+      /*
       final response = await http.post(
         Uri.parse('$_baseUrl/exams/$examId/start'),
         headers: {
@@ -276,6 +281,7 @@ class ExamService {
       } else {
         throw Exception('Failed to start exam');
       }
+      */
     } catch (e) {
       debugPrint('Error starting exam: $e');
       rethrow;
@@ -560,6 +566,54 @@ class ExamService {
         yield [];
       }
       await Future.delayed(const Duration(seconds: 30)); // Refresh every 30 seconds
+    }
+  }
+
+  Future<ExamSubmissionModel?> getExamSubmission(String submissionId) async {
+    await _ensureConnectivity();
+    
+    try {
+      // In mock implementation, find from mock submissions
+      return _mockSubmissions.firstWhere(
+        (submission) => submission.id == submissionId,
+        orElse: () => throw Exception('Submission not found'),
+      );
+    } catch (e) {
+      debugPrint('Error getting exam submission: $e');
+      return null;
+    }
+  }
+
+  // Method to record a warning for an exam submission
+  Future<void> recordWarning(String submissionId, WarningModel warning) async {
+    await _ensureConnectivity();
+    
+    try {
+      final submissionIndex = _mockSubmissions.indexWhere((s) => s.id == submissionId);
+      if (submissionIndex == -1) {
+        throw Exception('Submission not found');
+      }
+      
+      final submission = _mockSubmissions[submissionIndex];
+      final newWarnings = List<ExamWarningModel>.from(submission.warnings)
+        ..add(ExamWarningModel(
+          id: warning.id,
+          type: warning.type,
+          description: warning.description,
+          timestamp: warning.timestamp,
+        ));
+      
+      // Create new submission with updated warnings
+      final updatedSubmission = submission.copyWith(
+        warnings: newWarnings,
+        status: newWarnings.length >= 5 ? 'terminated' : submission.status,
+        submittedAt: newWarnings.length >= 5 ? DateTime.now() : submission.submittedAt,
+      );
+      
+      _mockSubmissions[submissionIndex] = updatedSubmission;
+    } catch (e) {
+      debugPrint('Error recording warning: $e');
+      rethrow;
     }
   }
 } 

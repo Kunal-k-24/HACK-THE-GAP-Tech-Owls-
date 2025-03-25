@@ -184,4 +184,40 @@ class ExamWarningModel {
       'timestamp': timestamp.toIso8601String(),
     };
   }
+}
+
+class WarningModel {
+  final String id;
+  final String type;
+  final String description;
+  final DateTime timestamp;
+  final String? evidence;
+
+  WarningModel({
+    required this.id,
+    required this.type,
+    required this.description,
+    required this.timestamp,
+    this.evidence,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'type': type,
+      'description': description,
+      'timestamp': timestamp.toIso8601String(),
+      'evidence': evidence,
+    };
+  }
+
+  factory WarningModel.fromJson(Map<String, dynamic> json) {
+    return WarningModel(
+      id: json['id'] as String,
+      type: json['type'] as String,
+      description: json['description'] as String,
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      evidence: json['evidence'] as String?,
+    );
+  }
 } 
