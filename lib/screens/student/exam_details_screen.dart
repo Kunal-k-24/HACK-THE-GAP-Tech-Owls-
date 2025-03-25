@@ -130,6 +130,7 @@ class _ExamDetailsScreenState extends State<ExamDetailsScreen> {
           builder: (_) => TakeExamScreen(
             exam: widget.exam,
             submission: submission,
+            userRole: 'student',
           ),
         ),
       );

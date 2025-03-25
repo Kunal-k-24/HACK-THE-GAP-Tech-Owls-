@@ -5,15 +5,19 @@ import 'package:onlineex/models/exam_submission_model.dart';
 import 'package:onlineex/services/mock_exam_service.dart';
 import 'package:onlineex/services/mock_proctoring_service.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class TakeExamScreen extends StatefulWidget {
   final ExamModel exam;
   final ExamSubmissionModel submission;
+  final String userRole;
   
   const TakeExamScreen({
     super.key,
     required this.exam,
     required this.submission,
+    required this.userRole,
   });
 
   @override
@@ -42,6 +46,12 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
   int _consecutiveWarnings = 0;
   bool _warningSystemActive = true;
   
+  final FlutterTts flutterTts = FlutterTts();
+  final stt.SpeechToText speech = stt.SpeechToText();
+  bool _isBlindMode = false;
+  bool _isSpeaking = false;
+  bool _isListening = false;
+  
   @override
   void initState() {
     super.initState();
@@ -51,6 +61,8 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
     _startExamTimer();
     _initializeCamera();
     _startWarningTimer();
+    _initializeTts();
+    _initializeSpeech();
   }
   
   @override
@@ -66,6 +78,8 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
     for (final controller in _textControllers.values) {
       controller.dispose();
     }
+    flutterTts.stop();
+    speech.stop();
     super.dispose();
   }
   
@@ -326,7 +340,7 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
         _examTimer.cancel();
         _warningTimer.cancel();
         
-        // Show result dialog
+        // Show result dialog and then navigate
         await showDialog(
           context: context,
           barrierDismissible: false,
@@ -360,6 +374,11 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
                 onPressed: () {
                   Navigator.pop(context); // Close dialog
                   Navigator.pop(context); // Return to previous screen
+                  // Navigate to respective dashboard
+                  Navigator.pushReplacementNamed(
+                    context,
+                    widget.userRole == 'student' ? '/student/dashboard' : '/teacher/dashboard',
+                  );
                 },
                 child: const Text('OK'),
               ),
@@ -378,6 +397,49 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+  
+  Future<void> _initializeTts() async {
+    await flutterTts.setLanguage('en-US');
+    await flutterTts.setPitch(1.0);
+    await flutterTts.setSpeechRate(0.5);
+  }
+
+  Future<void> _initializeSpeech() async {
+    await speech.initialize();
+  }
+
+  Future<void> _speakQuestion() async {
+    if (_isSpeaking) return;
+
+    final question = _questions[_currentQuestionIndex];
+    final options = question.options ?? [];
+    
+    setState(() => _isSpeaking = true);
+    
+    // Speak question
+    await flutterTts.speak('Question ${_currentQuestionIndex + 1}: ${question.text}');
+    await Future.delayed(const Duration(seconds: 3));
+    
+    // Speak options
+    for (int i = 0; i < options.length; i++) {
+      await flutterTts.speak('Option ${String.fromCharCode(65 + i)}: ${options[i]}');
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    
+    setState(() => _isSpeaking = false);
+
+    // For text/essay questions in blind mode, start listening automatically
+    if (_isBlindMode && (question.type == 'text' || question.type == 'essay')) {
+      await flutterTts.speak('Please speak your answer now');
+      await Future.delayed(const Duration(seconds: 2));
+      _startListening();
+    }
+    // For multiple choice in blind mode, select option B
+    else if (_isBlindMode && question.type == 'multiple_choice') {
+      await Future.delayed(const Duration(seconds: 1));
+      _saveAnswer(question.id, '1', question.type); // '1' represents option B (0-based index)
     }
   }
   
@@ -427,6 +489,20 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
           automaticallyImplyLeading: isCompleted,
           actions: [
             if (!isCompleted)
+              IconButton(
+                icon: Icon(_isBlindMode ? Icons.accessibility : Icons.accessibility_new),
+                onPressed: () {
+                  setState(() {
+                    _isBlindMode = !_isBlindMode;
+                    if (_isBlindMode) {
+                      _warningSystemActive = false; // Disable warnings for blind mode
+                      _speakQuestion(); // Start speaking the current question
+                    }
+                  });
+                },
+                tooltip: 'Toggle Blind Mode',
+              ),
+            if (!isCompleted)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Center(
@@ -468,102 +544,11 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
               flex: 3,
               child: _buildExamContent(),
             ),
-            // Camera preview with warning
-            if (_isCameraInitialized)
+            // Only show camera preview if not in blind mode
+            if (_isCameraInitialized && !_isBlindMode)
               Expanded(
                 flex: 1,
-                child: Stack(
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _showWarning ? Colors.red : Colors.grey.shade300,
-                          width: _showWarning ? 2 : 1,
-                        ),
-                      ),
-                      child: Stack(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: CameraPreview(_cameraController),
-                          ),
-                          // Always show warning count
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.6),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                'Warnings: ${_warnings.length}/5',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ),
-                          // Warning overlay
-                          if (_showWarning)
-                            Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.red, width: 2),
-                                color: Colors.red.withOpacity(0.1),
-                              ),
-                              child: Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.warning_amber_rounded,
-                                      color: Colors.red,
-                                      size: 48,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Warning ${_warnings.length}/5',
-                                      style: const TextStyle(
-                                        color: Colors.red,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      'Face not detected',
-                                      style: TextStyle(
-                                        color: Colors.red.shade700,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                    if (_warningSystemActive)
-                                      Column(
-                                        children: [
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            'Click Next/Previous to stop warnings',
-                                            style: TextStyle(
-                                              color: Colors.red.shade700,
-                                              fontSize: 10,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                child: _buildCameraPreview(),
               ),
           ],
         ),
@@ -591,16 +576,28 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
                 ),
               ),
               const Spacer(),
+              if (_isBlindMode && !_isSpeaking)
+                ElevatedButton.icon(
+                  onPressed: _speakQuestion,
+                  icon: const Icon(Icons.volume_up),
+                  label: const Text('Read Question'),
+                ),
               if (_currentQuestionIndex > 0)
                 TextButton.icon(
-                  onPressed: _previousQuestion,
+                  onPressed: () {
+                    _previousQuestion();
+                    if (_isBlindMode) _speakQuestion();
+                  },
                   icon: const Icon(Icons.arrow_back),
                   label: const Text('Previous'),
                 ),
               const SizedBox(width: 8),
               if (_currentQuestionIndex < _questions.length - 1)
                 TextButton.icon(
-                  onPressed: _nextQuestion,
+                  onPressed: () {
+                    _nextQuestion();
+                    if (_isBlindMode) _speakQuestion();
+                  },
                   icon: const Icon(Icons.arrow_forward),
                   label: const Text('Next'),
                 ),
@@ -658,22 +655,199 @@ class _TakeExamScreenState extends State<TakeExamScreen> with WidgetsBindingObse
       case 'essay':
         // Use the persistent text controller
         final controller = _textControllers[question.id]!;
-        return TextField(
-          maxLines: question.type == 'essay' ? 8 : 1,
-          decoration: InputDecoration(
-            hintText: 'Enter your answer here',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
+        return Column(
+          children: [
+            TextField(
+              maxLines: question.type == 'essay' ? 8 : 1,
+              decoration: InputDecoration(
+                hintText: _isBlindMode ? 'Speaking mode active...' : 'Enter your answer here',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              controller: controller,
+              enabled: !_isBlindMode && widget.submission.status != 'completed',
+              onChanged: (value) {
+                _saveAnswer(question.id, value, question.type);
+              },
             ),
-          ),
-          controller: controller,
-          enabled: widget.submission.status != 'completed',
-          onChanged: (value) {
-            _saveAnswer(question.id, value, question.type);
-          },
+            if (_isListening) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Listening... Speak your answer',
+                style: TextStyle(
+                  color: Colors.blue,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ],
         );
       default:
         return const Center(child: Text('Unsupported question type'));
     }
+  }
+  
+  Future<void> _startListening() async {
+    bool available = await speech.initialize(
+      onStatus: (status) {
+        if (status == 'done') {
+          setState(() => _isListening = false);
+          // After finishing listening, read back the answer
+          if (_isBlindMode) {
+            _readBackAnswer();
+          }
+        }
+      },
+      onError: (error) {
+        setState(() => _isListening = false);
+        if (_isBlindMode) {
+          flutterTts.speak('Sorry, there was an error with speech recognition. Please try again.');
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $error')),
+        );
+      },
+    );
+
+    if (available) {
+      setState(() => _isListening = true);
+      
+      await speech.listen(
+        onResult: (result) {
+          if (result.finalResult) {
+            final currentQuestion = _questions[_currentQuestionIndex];
+            final controller = _textControllers[currentQuestion.id]!;
+            
+            setState(() {
+              // Append to existing text with a space if there's already text
+              String newText = controller.text.isEmpty 
+                ? result.recognizedWords 
+                : '${controller.text} ${result.recognizedWords}';
+              
+              controller.text = newText;
+              _saveAnswer(currentQuestion.id, newText, currentQuestion.type);
+              _isListening = false;
+            });
+          }
+        },
+        localeId: 'en_US',
+      );
+    } else {
+      if (_isBlindMode) {
+        flutterTts.speak('Speech recognition is not available on this device');
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Speech recognition not available on this device'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _readBackAnswer() async {
+    final currentQuestion = _questions[_currentQuestionIndex];
+    final controller = _textControllers[currentQuestion.id]!;
+    
+    if (controller.text.isNotEmpty) {
+      await flutterTts.speak('Your answer is: ${controller.text}');
+      await Future.delayed(const Duration(seconds: 2));
+      await flutterTts.speak('Say a new answer to change it, or use next or previous to move between questions');
+    }
+  }
+  
+  Widget _buildCameraPreview() {
+    return Stack(
+      children: [
+        Container(
+          margin: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _showWarning ? Colors.red : Colors.grey.shade300,
+              width: _showWarning ? 2 : 1,
+            ),
+          ),
+          child: Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: CameraPreview(_cameraController),
+              ),
+              // Always show warning count
+              Positioned(
+                top: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Warnings: ${_warnings.length}/5',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+              // Warning overlay
+              if (_showWarning)
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red, width: 2),
+                    color: Colors.red.withOpacity(0.1),
+                  ),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.red,
+                          size: 48,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Warning ${_warnings.length}/5',
+                          style: const TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Face not detected',
+                          style: TextStyle(
+                            color: Colors.red.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (_warningSystemActive)
+                          Column(
+                            children: [
+                              const SizedBox(height: 8),
+                              Text(
+                                'Click Next/Previous to stop warnings',
+                                style: TextStyle(
+                                  color: Colors.red.shade700,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 } 

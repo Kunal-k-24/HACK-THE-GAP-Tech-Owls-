@@ -63,6 +63,10 @@ dependencies:
   intl: ^0.18.1
   uuid: ^4.3.3
   http: ^1.1.0
+  
+  # Text-to-speech and speech-to-text
+  flutter_tts: ^3.8.5
+  speech_to_text: ^6.5.1
 
 dev_dependencies:
   flutter_test:
