@@ -6,6 +6,7 @@ import 'package:onlineex/services/auth_service.dart';
 import 'package:onlineex/services/exam_service.dart';
 import 'package:onlineex/services/connectivity_service.dart';
 import 'package:intl/intl.dart';
+import 'package:onlineex/services/mock_exam_service.dart';
 
 class CreateExamScreen extends StatefulWidget {
   final ExamModel? examToEdit;
@@ -34,6 +35,8 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
   bool _isEditing = false;
   
   List<QuestionModel> _questions = [];
+  
+  final _examService = MockExamService();
   
   @override
   void initState() {
@@ -376,6 +379,58 @@ class _CreateExamScreenState extends State<CreateExamScreen> {
         ),
       ],
     );
+  }
+  
+  Future<void> _generateExam({required bool useAI}) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final exam = await _examService.generateExam(useAI: useAI);
+      
+      if (mounted) {
+        // Show success dialog
+        await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(useAI ? 'AI Generated Exam' : 'Demo Exam Generated'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Title: ${exam.title}'),
+                const SizedBox(height: 8),
+                Text('Questions: ${exam.questions.length}'),
+                const SizedBox(height: 8),
+                Text('Duration: ${exam.durationMinutes} minutes'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error generating exam: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
   
   @override
